@@ -1,80 +1,52 @@
 import os
 import logging
-import replicate
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# خواندن توکن‌ها از Railway Variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
 
-# تنظیم توکن Replicate
-if REPLICATE_API_TOKEN:
-    os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
-
-# تنظیم لاگ
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
-
+logging.basicConfig(level=logging.INFO)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "سلام! من ربات تصویرساز هستم. 🎨\n\n"
-        "هر متنی که دوست داری بفرست تا برات تصویر بسازم."
+        "سلام! متن تصویر را بفرست تا برات تصویر بسازم 🎨"
     )
-
 
 async def generate_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_prompt = update.message.text
+    prompt = update.message.text
+    await update.message.reply_text("در حال ساخت تصویر... ⏳")
 
-    await update.message.reply_text(
-        f"در حال ساخت تصویر برای:\n\n{user_prompt}\n\nلطفاً چند ثانیه صبر کن... ⏳"
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-1-schnell"
+
+    headers = {
+        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    response = requests.post(
+        url,
+        headers=headers,
+        json={"prompt": prompt},
+        timeout=120,
     )
 
-    try:
-        # اجرای مدل FLUX Schnell
-        output = replicate.run(
-            "black-forest-labs/flux-schnell",
-            input={
-                "prompt": user_prompt
-            },
+    if response.status_code != 200:
+        await update.message.reply_text(
+            f"خطا از Cloudflare: {response.status_code}\\n{response.text}"
         )
+        return
 
-        # خروجی ممکن است لیست یا رشته باشد
-        if isinstance(output, list):
-            image_url = output[0]
-        else:
-            image_url = str(output)
-
-        await update.message.reply_photo(photo=image_url)
-
-    except Exception as e:
-        logger.exception("Replicate error")
-        await update.message.reply_text(f"خطای Replicate:\\n{e}")
-
+    image_bytes = response.content
+    await update.message.reply_photo(photo=image_bytes)
 
 def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("TELEGRAM_TOKEN تنظیم نشده است.")
-        return
-
-    if not REPLICATE_API_TOKEN:
-        logger.error("REPLICATE_API_TOKEN تنظیم نشده است.")
-        return
-
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, generate_image)
-    )
-
-    logger.info("ربات با موفقیت روشن شد.")
-    application.run_polling()
-
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, generate_image))
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
