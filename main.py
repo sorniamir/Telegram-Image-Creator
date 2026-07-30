@@ -1,7 +1,8 @@
 import os
 import logging
-import requests
 from io import BytesIO
+
+from openai import OpenAI
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -11,18 +12,15 @@ from telegram.ext import (
     filters,
 )
 
-# تنظیم لاگ
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
-# متغیرهای محیطی
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
-CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-MODEL = "@cf/black-forest-labs/flux-1-schnell"
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -36,43 +34,26 @@ async def generate_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("در حال ساخت تصویر... ⏳")
 
-    url = (
-        f"https://api.cloudflare.com/client/v4/accounts/"
-        f"{CLOUDFLARE_ACCOUNT_ID}/ai/run/{MODEL}"
-    )
-
-    headers = {
-        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
-        "Content-Type": "application/json",
-        "Accept": "image/png",
-    }
-
-    payload = {
-        "prompt": prompt
-    }
-
     try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=180,
+        result = client.images.generate(
+            model="gpt-image-1",
+            prompt=prompt,
+            size="1024x1024",
         )
 
-        print("STATUS:", response.status_code)
-        print("CONTENT-TYPE:", response.headers.get("content-type"))
+        image_base64 = result.data[0].b64_json
 
-        if response.status_code != 200:
-            await update.message.reply_text(
-                f"خطای Cloudflare ({response.status_code}):\n{response.text}"
-            )
-            return
+        import base64
 
-        image = BytesIO(response.content)
-        image.name = "generated.png"
-        image.seek(0)
+        image_bytes = base64.b64decode(image_base64)
+        image_file = BytesIO(image_bytes)
+        image_file.name = "image.png"
+        image_file.seek(0)
 
-        await update.message.reply_photo(photo=image)
+        await update.message.reply_photo(
+            photo=image_file,
+            caption="تصویر آماده شد ✅"
+        )
 
     except Exception as e:
         logging.exception(e)
@@ -81,16 +62,10 @@ async def generate_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not TELEGRAM_TOKEN:
-        print("خطا: TELEGRAM_TOKEN تنظیم نشده است")
-        return
+        raise RuntimeError("TELEGRAM_TOKEN تنظیم نشده است")
 
-    if not CLOUDFLARE_API_TOKEN:
-        print("خطا: CLOUDFLARE_API_TOKEN تنظیم نشده است")
-        return
-
-    if not CLOUDFLARE_ACCOUNT_ID:
-        print("خطا: CLOUDFLARE_ACCOUNT_ID تنظیم نشده است")
-        return
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY تنظیم نشده است")
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
